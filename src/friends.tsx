@@ -1,3 +1,4 @@
+import { t, type MessageKey } from "./i18n";
 import React, { useState } from "react";
 import { DialogButton, DialogCheckbox, Menu, MenuItem, showContextMenu } from "@decky/ui";
 import type { Player } from "./rpc";
@@ -62,7 +63,7 @@ const styles = `
     background: #fff !important; color: #0e141b !important; box-shadow: none !important;
   }
   .nexus-friend-checkbox:is(:focus, :focus-visible, :focus-within, .gpfocus, .gpfocuswithin)
-    :is(.nexus-friend-status, .nexus-friend-device) { color: #39434e; }
+    .nexus-friend-device { color: #39434e; }
   .nexus-friend-content { display: flex; align-items: center; gap: 7px; }
   .nexus-friend-avatar {
     flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%; display: grid;
@@ -75,6 +76,8 @@ const styles = `
   .nexus-friend-name, .nexus-friend-status { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .nexus-friend-name { font-size: 14px; font-weight: 650; }
   .nexus-friend-status { font-size: 12px; color: #c3cad1; }
+  .nexus-friend-row:is(:focus, :focus-visible, .gpfocus) .nexus-friend-status,
+  .nexus-friend-checkbox:is(:focus-within, .gpfocuswithin) .nexus-friend-status { color: inherit; }
   .nexus-friend-star { margin-left: 5px; color: #f1cf68; }
   .nexus-friend-device { flex: 0 0 16px; color: #c3cad1; }
   .nexus-friend-more { color: #c3cad1; letter-spacing: 1px; align-self: center; }
@@ -98,15 +101,15 @@ interface FriendSelection {
 
 type FriendActions = Omit<FriendListProps, "friends">;
 
-function FriendRow({ player, actions, selection, preview, unread, activate, disabled }: {
+function FriendRow({ player, actions, selection, preview, unread, activate, menu, disabled, hidePlatform }: {
   player: Player; actions?: FriendActions; selection?: FriendSelection; preview?: string;
-  unread?: boolean; activate?: () => void; disabled?: boolean;
+  unread?: boolean; activate?: () => void; menu?: React.ReactNode; disabled?: boolean; hidePlatform?: boolean;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const status = presenceOf(player);
   const detail = player.presence?.trim();
   const activity = detail && !["online", "away", "offline", "presence unavailable"].includes(detail.toLowerCase()) ? detail : undefined;
-  const subtitle = [status, activity, player.inParty && player.online ? "In a party" : undefined].filter(Boolean).join(" · ");
+  const subtitle = [t(status), activity, player.inParty && player.online ? t("In a party") : undefined].filter(Boolean).join(" · ");
   const content = <>
     <span className="nexus-friend-content">
       <span className="nexus-friend-avatar" aria-hidden="true">
@@ -116,14 +119,14 @@ function FriendRow({ player, actions, selection, preview, unread, activate, disa
         <span className="nexus-friend-dot" style={{ background: tone[status] }} />
       </span>
       <span className="nexus-friend-copy">
-        <span className="nexus-friend-name">{player.gamertag}{player.favorite && <span className="nexus-friend-star" aria-label="Favorite">★</span>}</span>
+        <span className="nexus-friend-name">{player.gamertag}{player.favorite && <span className="nexus-friend-star" aria-label={t("Favorite")}>★</span>}</span>
         <span className="nexus-friend-status" title={preview ?? subtitle}>{preview ?? subtitle}</span>
       </span>
-      {player.online && (player.device === "pc" || player.device === "xbox") &&
+      {!hidePlatform && player.online && (player.device === "pc" || player.device === "xbox") &&
         <svg className="nexus-friend-device" width="16" height="16" viewBox="0 0 24 24"
           fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"
-          role="img" aria-label={player.device === "pc" ? "PC" : "Xbox console"}>
-          <title>{player.device === "pc" ? "PC" : "Xbox console"}</title>
+          role="img" aria-label={player.device === "pc" ? "PC" : t("Xbox console")}>
+          <title>{player.device === "pc" ? "PC" : t("Xbox console")}</title>
           {player.device === "pc" ? <>
             <rect x="3" y="4" width="18" height="12" rx="2" />
             <path d="M12 16v4m-4 0h8" />
@@ -134,28 +137,31 @@ function FriendRow({ player, actions, selection, preview, unread, activate, disa
         </svg>}
       {(player.joinablePartyId || player.inParty) && <svg width="16" height="16" viewBox="0 0 24 24"
         fill="none" stroke={player.joinablePartyId ? "#9ae36d" : "currentColor"} strokeWidth="1.8" role="img"
-        aria-label={player.joinablePartyId ? "Joinable Xbox party" : "In an Xbox party"}>
-        <title>{player.joinablePartyId ? "Joinable Xbox party" : "In an Xbox party"}</title>
+        aria-label={player.joinablePartyId ? t("Joinable Xbox party") : t("In an Xbox party")}>
+        <title>{player.joinablePartyId ? t("Joinable Xbox party") : t("In an Xbox party")}</title>
         <path d="M3 14v-2a9 9 0 0 1 18 0v2" />
         <rect x="3" y="12" width="4" height="7" rx="2" /><rect x="17" y="12" width="4" height="7" rx="2" />
       </svg>}
-      {unread && <span aria-label="Unread" title="Unread" style={{ color: "#9ae36d", flexShrink: 0 }}>●</span>}
-      {actions && <span className="nexus-friend-more" aria-hidden="true">···</span>}
+      {unread && <span aria-label={t("Unread")} title={t("Unread")} style={{ color: "#9ae36d", flexShrink: 0 }}>●</span>}
+      {(actions || menu) && <span className="nexus-friend-more" aria-hidden="true">···</span>}
     </span>
   </>;
   if (selection) return <DialogCheckbox className="nexus-friend-row nexus-friend-checkbox"
     label={content} bottomSeparator="none" controlled checked={selection.selected.has(player.xuid)}
     disabled={selection.busy} onChange={() => selection.toggle(player.xuid)} />;
   if (activate) return <DialogButton className="nexus-friend-row" disabled={disabled} onClick={activate}>{content}</DialogButton>;
+  if (menu) return <DialogButton className="nexus-friend-row" disabled={disabled} onClick={event =>
+    showContextMenu(<Menu label={player.gamertag}>{menu}</Menu>, event.currentTarget ?? undefined)
+  }>{content}</DialogButton>;
   if (!actions) return <div className="nexus-friend-row">{content}</div>;
   const { busy, onJoin, onMessage, onFavorite, onRemove, onBlock } = actions;
   return <DialogButton className="nexus-friend-row" disabled={busy} onClick={event =>
     showContextMenu(<Menu label={player.gamertag}>
-      {player.joinablePartyId && <MenuItem onSelected={() => onJoin(player)}>Join party</MenuItem>}
-      <MenuItem onSelected={() => onMessage(player)}>Message</MenuItem>
-      <MenuItem onSelected={() => onFavorite(player)}>{player.favorite ? "Remove from favorites" : "Add to favorites"}</MenuItem>
-      <MenuItem onSelected={() => onRemove(player)}>Remove friend</MenuItem>
-      <MenuItem onSelected={() => onBlock(player)}>Block player</MenuItem>
+      {player.joinablePartyId && <MenuItem onSelected={() => onJoin(player)}>{t("Join party")}</MenuItem>}
+      <MenuItem onSelected={() => onMessage(player)}>{t("Message")}</MenuItem>
+      <MenuItem onSelected={() => onFavorite(player)}>{player.favorite ? t("Remove from favorites") : t("Add to favorites")}</MenuItem>
+      <MenuItem onSelected={() => onRemove(player)}>{t("Remove friend")}</MenuItem>
+      <MenuItem onSelected={() => onBlock(player)}>{t("Block player")}</MenuItem>
     </Menu>, event.currentTarget ?? undefined)
   }>
     {content}
@@ -164,32 +170,32 @@ function FriendRow({ player, actions, selection, preview, unread, activate, disa
 
 export function FriendList({ friends, actions, selection }: { friends: Player[]; actions?: FriendActions; selection?: FriendSelection }) {
   const { online, offline, unavailable } = groupFriends(friends);
-  const groups = [
+  const groups: { title: MessageKey; players: Player[] }[] = [
     { title: "Online", players: online },
     { title: "Offline", players: offline },
     { title: "Status unavailable", players: unavailable },
   ];
   return <section className="nexus-friends-list">
     <style>{styles}</style>
-    {!selection && <h2>Friends</h2>}
+    {!selection && <h2>{t("Friends")}</h2>}
     {groups.map(({ title, players }) => (players.length > 0 || title === "Online") &&
-      <section className="nexus-friends-group" key={title} aria-label={title}>
-        <h3>{title} <span>{players.length}</span></h3>
-        {players.length === 0 && <div>No friends online.</div>}
+      <section className="nexus-friends-group" key={title} aria-label={t(title)}>
+        <h3>{t(title)} <span>{players.length}</span></h3>
+        {players.length === 0 && <div>{t("No friends online.")}</div>}
         {players.map(player => <div className="nexus-friend-entry" key={player.xuid}><FriendRow player={player} actions={actions} selection={selection} /></div>)}
       </section>
     )}
   </section>;
 }
 
-export function PlayerRows({ rows, busy }: { rows: {
-  key: string; player: Player; preview?: string; unread?: boolean; activate(): void;
-}[]; busy: boolean }) {
+export function PlayerRows({ rows, busy, hidePlatform }: { rows: {
+  key: string; player: Player; preview?: string; unread?: boolean; activate?(): void; menu?: React.ReactNode;
+}[]; busy: boolean; hidePlatform?: boolean }) {
   return <div className="nexus-friends-list">
     <style>{styles}</style>
     <div className="nexus-friends-group">
       {rows.map(({ key, ...row }) => <div className="nexus-friend-entry" key={key}>
-        <FriendRow {...row} disabled={busy} />
+        <FriendRow {...row} disabled={busy} hidePlatform={hidePlatform} />
       </div>)}
     </div>
   </div>;

@@ -1,6 +1,8 @@
+import { PeopleDialog } from "./people-dialog";
+import { initializeLanguage, t, translateError, useLanguage } from "./i18n";
 import { InvitePeople } from "./invite-people";
 import { addEventListener, removeEventListener, definePlugin, routerHook, toaster } from "@decky/api";
-import { ConfirmModal, DialogButton, Focusable, Navigation, PanelSection, PanelSectionRow, ButtonItem, TextField, showModal, staticClasses } from "@decky/ui";
+import { ConfirmModal, DialogButton, Focusable, Navigation, PanelSection, PanelSectionRow, ButtonItem, showModal, staticClasses } from "@decky/ui";
 import React, { useEffect, useState, type ReactNode } from "react";
 import { SocialHeader, tabs } from "./header";
 import { installPartyBadge } from "./party-badge";
@@ -28,13 +30,14 @@ function PartyRowButton({ label, disabled, onClick, children }: {
 }
 
 function confirm(label: string, callback: () => void) {
-  showModal(<ConfirmModal strTitle={label} strOKButtonText="Confirm" onOK={callback} />);
+  showModal(<ConfirmModal strTitle={label} strOKButtonText={t("Confirm")} strCancelButtonText={t("Cancel")} onOK={callback} />);
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const initialVoice: VoiceState = { connected: false, muted: true, audioBlocked: false };
 
 export default definePlugin(() => {
+  void initializeLanguage();
   // Quick Access can unmount its content while the party should keep running.
   let partyAccount = "";
   let selfXuid = "";
@@ -49,18 +52,18 @@ export default definePlugin(() => {
   let partyMessages: PartyMessage[] = [];
   const openPartyChats = new Map<symbol, string>();
   let rosterIds: Set<string> | undefined;
-  const displayName = (id: string) => profiles.get(id)?.gamertag ?? `Xbox player (${id})`;
-  const toast = (body: string) => { if (!disposed) toaster.toast({ title: "Xbox party", body }); };
+  const displayName = (id: string) => profiles.get(id)?.gamertag ?? t("Xbox player ({id})", { id });
+  const toast = (body: string) => { if (!disposed) toaster.toast({ title: t("Xbox party"), body }); };
 
   function updateRoster(state: xbox.Party) {
     if (disposed || !state.alive) return;
     partyBadge.update(state.members.length);
     const next = new Set(state.members.map(member => member.xuid));
     if (rosterIds) {
-      for (const id of next) if (!rosterIds.has(id)) toast(`${displayName(id)} joined the party`);
+      for (const id of next) if (!rosterIds.has(id)) toast(t("{name} joined the party", { name: displayName(id) }));
       for (const id of rosterIds) if (!next.has(id)) {
         speaking.delete(id);
-        toast(`${displayName(id)} left the party`);
+        toast(t("{name} left the party", { name: displayName(id) }));
       }
     }
     rosterIds = next;
@@ -105,8 +108,8 @@ export default definePlugin(() => {
     xboxVoiceAllowed: xbox.voiceAllowed,
     xboxTextAllowed: xbox.textAllowed,
   }, state => {
-    if (state.connected && !voiceState.connected) toast(joiningParty ? "Joined the party" : "Party created");
-    if (!state.connected && voiceState.connected && state.error) toast("Disconnected from the party");
+    if (state.connected && !voiceState.connected) toast(joiningParty ? t("Joined the party") : t("Party created"));
+    if (!state.connected && voiceState.connected && state.error) toast(t("Disconnected from the party"));
     voiceState = state;
     if (!state.connected) {
       partyBadge.update(0);
@@ -123,7 +126,7 @@ export default definePlugin(() => {
   }, message => {
     partyMessages = [...partyMessages.slice(-99), message];
     if (message.sender && !Array.from(openPartyChats.values()).includes(partyAccount)) {
-      toast(`${displayName(message.sender)} sent a message`);
+      toast(t("{name} sent a message", { name: displayName(message.sender) }));
     }
     notify();
   });
@@ -151,6 +154,7 @@ export default definePlugin(() => {
   let quickAccessTab: (typeof tabs)[number] = "Friends";
 
   function SocialPanel({ initialTab }: { initialTab?: (typeof tabs)[number] }) {
+    useLanguage();
     const [tab, setSelectedTab] = useState(initialTab ?? quickAccessTab);
     function setTab(next: (typeof tabs)[number]) {
       if (!initialTab) quickAccessTab = next;
@@ -159,16 +163,12 @@ export default definePlugin(() => {
     const [roster, setRoster] = useState(cachedRoster);
     const [snapshot, setSnapshot] = useState(() => initialTab === "Party" && voiceState.connected &&
       cachedSnapshot?.account === partyAccount ? cachedSnapshot : undefined);
-    const [view, setView] = useState<"friends" | xbox.PeopleList>("friends");
-    const [results, setResults] = useState<xbox.Player[]>([]);
-    const [truncated, setTruncated] = useState(false);
-    const [query, setQuery] = useState("");
     const [party, setParty] = useState(() => voiceState.connected ? cachedParty : undefined);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [, redraw] = useState(0);
 
-    async function run(task: () => Promise<void>) {
+    async function run(task: () => Promise<unknown>) {
       setBusy(true);
       setError("");
       try { await task(); }
@@ -178,10 +178,6 @@ export default definePlugin(() => {
 
     async function refresh() {
       const data = await xbox.load();
-      if (roster && roster.account !== data.account) {
-        setView("friends");
-        setResults([]);
-      }
       const { account, me, friends } = data;
       cachedSnapshot = data;
       cachedRoster = { account, me, friends };
@@ -190,6 +186,7 @@ export default definePlugin(() => {
       if (!voiceState.connected || partyAccount === account) {
         for (const player of [me, ...friends]) profiles.set(player.xuid, player);
       }
+      return data;
     }
 
     useEffect(() => {
@@ -269,27 +266,18 @@ export default definePlugin(() => {
       }} />);
     }
 
-    async function loadPeople(list: xbox.PeopleList) {
-      if (!account) return;
-      const page = await xbox.listPeople(account, list, list === "search" ? query.trim() : "");
-      setResults(page.items);
-      setTruncated(page.truncated);
-      setView(list);
-    }
-
-    function relationship(label: string, operation: xbox.PeopleAction, player: xbox.Player, ask = false) {
+    function relationship(operation: xbox.PeopleAction, player: xbox.Player, confirmation?: string) {
       const apply = () => void run(async () => {
         if (!account) return;
         await xbox.changePeople(account, operation, player.xuid);
         await refresh();
-        if (view !== "friends") await loadPeople(view);
       });
-      if (ask) confirm(`${label} ${player.gamertag}?`, apply);
+      if (confirmation) confirm(confirmation, apply);
       else apply();
     }
 
     function threadName(id: string) {
-      return snapshot?.friends.find(friend => friend.xuid === id)?.gamertag ?? `Xbox player (${id})`;
+      return snapshot?.friends.find(friend => friend.xuid === id)?.gamertag ?? t("Xbox player ({id})", { id });
     }
 
     async function startVoice(snapshot: xbox.Snapshot, joinability: xbox.Joinability, friend?: string) {
@@ -315,17 +303,19 @@ export default definePlugin(() => {
       const xuid = thread.participants[0];
       const player = profiles.get(xuid) ?? { xuid, gamertag: threadName(xuid) };
       const last = thread.lastMessage;
-      const preview = !last ? "No messages" : last.hidden ? "Message unavailable" : `${last.mine ? "You: " : ""}${last.text}`;
+      const preview = !last ? t("No messages") : last.hidden ? t("Message unavailable") : (last.mine ? t("You: {message}", { message: last.text }) : last.text);
       return { key: thread.id, player, preview, unread: thread.unread, activate: () => openThread(player) };
     }) ?? [];
 
     return <>
       <SocialHeader player={roster?.me} tab={tab} busy={busy} ready={!!snapshot} error={error}
-        select={next => { setTab(next); if (next === "Friends") setView("friends"); }}
+        select={setTab}
+        manage={snapshot ? () => showModal(<PeopleDialog mode="manage" snapshot={snapshot} refresh={refresh} />) : undefined}
+        search={snapshot ? () => showModal(<PeopleDialog mode="search" snapshot={snapshot} refresh={refresh} />) : undefined}
         refresh={() => void run(refresh)} />
-      {!snapshot && roster && <FriendList friends={roster.friends} />}
+      {!snapshot && roster && <PanelSection><FriendList friends={roster.friends} /></PanelSection>}
 
-      {snapshot && tab === "Friends" && view === "friends" &&
+      {snapshot && tab === "Friends" && <PanelSection>
         <FriendList
           friends={snapshot.friends}
           actions={{
@@ -333,57 +323,32 @@ export default definePlugin(() => {
             onMessage: openThread,
             onJoin: player => {
               if (partyBusy || voiceState.connected) {
-                setError("Leave your current Xbox party before joining another.");
+                setError(t("Leave your current Xbox party before joining another."));
                 return;
               }
               setTab("Party");
               play(() => startVoice(snapshot, "inviteOnly", player.xuid));
             },
-            onFavorite: player => relationship("Favorite", player.favorite ? "unfavorite" : "favorite", player),
-            onRemove: player => relationship("Remove", "remove-friend", player, true),
-            onBlock: player => relationship("Block", "block", player, true),
+            onFavorite: player => relationship(player.favorite ? "unfavorite" : "favorite", player),
+            onRemove: player => relationship("remove-friend", player, t("Remove {name} from friends?", { name: player.gamertag })),
+            onBlock: player => relationship("block", player, t("Block {name}?", { name: player.gamertag })),
           }}
-        />}
-
-      {snapshot && tab === "Friends" && <PanelSection title="Manage friends">
-        <PanelSectionRow><TextField label="Gamertag" value={query} onChange={event => setQuery(event.currentTarget.value)} /></PanelSectionRow>
-        <Action disabled={busy || !query.trim()} onClick={() => void run(() => loadPeople("search"))}>Search Xbox</Action>
-        <Action disabled={busy || view === "friends"} onClick={() => setView("friends")}>Friend list</Action>
-        <Action disabled={busy} onClick={() => void run(() => loadPeople("received-requests"))}>Incoming requests</Action>
-        <Action disabled={busy} onClick={() => void run(() => loadPeople("sent-requests"))}>Sent requests</Action>
-        <Action disabled={busy} onClick={() => void run(() => loadPeople("blocked"))}>Blocked players</Action>
-        {view !== "friends" && truncated && <PanelSectionRow>Xbox returned a partial list.</PanelSectionRow>}
-        {view !== "friends" && results.length === 0 && <PanelSectionRow>No players to show.</PanelSectionRow>}
-        {view === "blocked" && results.length > 0 && <PlayerRows busy={busy} rows={results.map(player => ({
-          key: player.xuid, player, preview: "Blocked · Select to unblock",
-          activate: () => relationship("Unblock", "unblock", player, true),
-        }))} />}
-        {view !== "friends" && view !== "blocked" && results.map(player => {
-          const friend = snapshot.friends.find(item => item.xuid === player.xuid);
-          return <div key={player.xuid} style={{ marginBottom: 12 }}>
-            <PanelSectionRow><strong>{player.gamertag}</strong><div>{player.presence}</div></PanelSectionRow>
-            {view === "search" && player.xuid !== snapshot.me.xuid && <Action disabled={busy || !!friend} onClick={() => relationship("Send friend request to", "send-request", player)}>
-              {friend ? "Already friends" : "Send friend request"}
-            </Action>}
-            {view === "received-requests" && <>
-              <Action disabled={busy} onClick={() => relationship("Accept", "accept-request", player)}>Accept request</Action>
-              <Action disabled={busy} onClick={() => relationship("Decline request from", "decline-request", player)}>Decline request</Action>
-            </>}
-            {view === "sent-requests" && <Action disabled={busy} onClick={() => relationship("Cancel request to", "cancel-request", player)}>Cancel request</Action>}
-          </div>;
-        })}
+        />
       </PanelSection>}
 
-      {snapshot && tab === "Messages" && <PanelSection title="Direct messages">
-        {inboxRows.length ? <PlayerRows rows={inboxRows} busy={busy} /> : <PanelSectionRow>No direct messages.</PanelSectionRow>}
+      {snapshot && tab === "Messages" && <PanelSection>
+        <PanelSectionRow>
+          <h2 style={{ fontSize: 14, margin: 0, textTransform: "none" }}>{t("Messages")}</h2>
+        </PanelSectionRow>
+        {inboxRows.length ? <PlayerRows rows={inboxRows} busy={busy} hidePlatform /> : <PanelSectionRow>{t("No direct messages.")}</PanelSectionRow>}
       </PanelSection>}
 
       {snapshot && tab === "Party" && <PanelSection>
         <PanelSectionRow>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <h2 style={{ fontSize: 14, margin: 0 }}>Party</h2>
+            <h2 style={{ fontSize: 14, margin: 0 }}>{t("Party")}</h2>
             <Focusable flow-children="row" style={{ display: "flex", gap: 4 }}>
-              {voiceState.connected && partyAccount === account && <PartyRowButton label="Add people"
+              {voiceState.connected && partyAccount === account && <PartyRowButton label={t("Add people")}
                 disabled={partyDisabled || !visibleParty?.id} onClick={() => {
                   const partyId = visibleParty?.id;
                   if (!partyId) return;
@@ -396,31 +361,31 @@ export default definePlugin(() => {
                 <circle cx="8" cy="7" r="3" />
                 <path d="M2 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m4-13v8m-4-4h8" />
               </PartyRowButton>}
-              {voiceState.connected && partyAccount === account && <PartyRowButton label="View party chat"
+              {voiceState.connected && partyAccount === account && <PartyRowButton label={t("View party chat")}
                 disabled={partyDisabled} onClick={() => showModal(<PartyChat account={account} />)}>
                 <path d="M21 5H3v12h4v4l5-4h9zM7 9h10m-10 4h7" />
               </PartyRowButton>}
-              {(party?.id || voiceState.connected) && <PartyRowButton label="Leave party" disabled={partyDisabled} onClick={() => play(async () => {
+              {(party?.id || voiceState.connected) && <PartyRowButton label={t("Leave party")} disabled={partyDisabled} onClick={() => play(async () => {
               await voice.leave();
               cachedParty = undefined;
-              toast("You left the party");
+              toast(t("You left the party"));
             })}>
               <path d="M10 4H4v16h6m-1-8h12m-4-4 4 4-4 4" />
             </PartyRowButton>}
             </Focusable>
           </div>
         </PanelSectionRow>
-        {voiceState.error && <PanelSectionRow><div role="alert">{voiceState.error}</div></PanelSectionRow>}
+        {voiceState.error && <PanelSectionRow><div role="alert">{translateError(voiceState.error)}</div></PanelSectionRow>}
         {!party?.id && !voiceState.connected && (["inviteOnly", "followedByMembers"] as const).map(joinability =>
           <Action key={joinability} disabled={partyDisabled} onClick={() => play(async () => {
             await startVoice(snapshot, joinability);
-          })}>{joinability === "followedByMembers" ? "Create public party (joinable by friends)" : "Create invite-only party"}</Action>
+          })}>{joinability === "followedByMembers" ? t("Create public party (joinable by friends)") : t("Create invite-only party")}</Action>
         )}
         {(party?.id || voiceState.connected) && <PanelSectionRow>
           <PartyMember player={snapshot.me} speaking={voiceState.speaking === true} you
-            status={voiceState.connected ? "Connected" : undefined}
+            status={voiceState.connected ? t("Connected") : undefined}
             nameAction={voiceState.connected && partyAccount === account && <PartyRowButton
-              label={voiceState.muted ? "Enable microphone" : "Mute microphone"}
+              label={voiceState.muted ? t("Enable microphone") : t("Mute microphone")}
               disabled={partyDisabled} onClick={() => play(() => voice.setMuted(!voiceState.muted))}>
               <rect x="9" y="3" width="6" height="12" rx="3" />
               <path d="M5 11a7 7 0 0 0 14 0m-7 7v3m-3 0h6" />
@@ -428,14 +393,14 @@ export default definePlugin(() => {
             </PartyRowButton>} />
         </PanelSectionRow>}
         {voiceState.connected && partyAccount === account && <>
-          {voiceState.audioBlocked && <Action disabled={partyDisabled} onClick={() => play(() => voice.resumeAudio())}>Enable party audio</Action>}
+          {voiceState.audioBlocked && <Action disabled={partyDisabled} onClick={() => play(() => voice.resumeAudio())}>{t("Enable party audio")}</Action>}
           {visibleParty?.members.filter(member => member.xuid !== selfXuid).map(member => {
             const name = displayName(member.xuid);
             const muted = voice.isPeerMuted(member.xuid);
             return <PanelSectionRow key={member.xuid}>
               <PartyMember player={profiles.get(member.xuid) ?? { xuid: member.xuid, gamertag: name }}
                 speaking={speaking.has(member.xuid)} you={false}
-                nameAction={<PartyRowButton label={`${muted ? "Unmute" : "Mute"} ${name}`}
+                nameAction={<PartyRowButton label={t(muted ? "Unmute {name}" : "Mute {name}", { name })}
                   disabled={partyDisabled} onClick={() => {
                     voice.mutePeer(member.xuid, !voice.isPeerMuted(member.xuid));
                     notify();
@@ -454,6 +419,7 @@ export default definePlugin(() => {
   }
 
   function PartyChat({ account, closeModal }: { account: string; closeModal?: () => void }) {
+    useLanguage();
     const [draft, setDraft] = useState("");
     const [error, setError] = useState("");
     const [, redraw] = useState(0);
@@ -472,9 +438,9 @@ export default definePlugin(() => {
       id: String(index), text: message.text, mine: message.sender === null,
       sender: message.sender ? displayName(message.sender) : undefined, hidden: false, timestamp: null,
     })) : [];
-    return <ChatWindow title="Xbox party chat" closeModal={closeModal} messages={messages} draft={draft}
-      setDraft={setDraft} error={error} empty={connected ? "No party messages yet." : "Party disconnected."}
-      sendLabel="Send to party" sendDisabled={!connected} onSend={() => {
+    return <ChatWindow title={t("Xbox party chat")} closeModal={closeModal} messages={messages} draft={draft}
+      setDraft={setDraft} error={error} empty={connected ? t("No party messages yet.") : t("Party disconnected.")}
+      sendLabel={t("Send to party")} sendDisabled={!connected} onSend={() => {
         try {
           voice.sendText(draft);
           setDraft("");
@@ -511,7 +477,7 @@ export default definePlugin(() => {
     name: "Nexus Social",
     titleView: <div className={staticClasses.Title}>Nexus Social</div>,
     content: <SocialPanel />,
-    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+    icon: <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <circle cx="8" cy="7" r="3.5" />
       <circle cx="17" cy="8" r="3" />
       <path d="M1 20v-3a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v3H1Zm16 0v-3a7 7 0 0 0-1.4-4.2H18a5 5 0 0 1 5 5V20h-6Z" />

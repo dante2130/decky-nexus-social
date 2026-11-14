@@ -1,3 +1,4 @@
+import { t, translateError, useLanguage } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { DialogButton, Focusable, TextField } from "@decky/ui";
 import { WideModal } from "./wide-modal";
@@ -55,7 +56,7 @@ export function Conversation({ player, account, closeModal, onSent }: {
     })} />;
 }
 
-export function ChatWindow({ title, closeModal, messages, draft, setDraft, busy, error, empty = "No messages to show.", onRefresh, onSend, sendDisabled, sendLabel = "Send message" }: {
+export function ChatWindow({ title, closeModal, messages, draft, setDraft, busy, error, empty = t("No messages to show."), onRefresh, onSend, sendDisabled, sendLabel = t("Send message") }: {
   title: string;
   closeModal?: () => void;
   messages: readonly (xbox.Message & { sender?: string })[];
@@ -69,6 +70,7 @@ export function ChatWindow({ title, closeModal, messages, draft, setDraft, busy,
   sendDisabled?: boolean;
   sendLabel?: string;
 }) {
+  const language = useLanguage();
   const history = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,28 +81,28 @@ export function ChatWindow({ title, closeModal, messages, draft, setDraft, busy,
     <Focusable flow-children="column" style={{ width: "100%", minWidth: 0, boxSizing: "border-box", height: "min(510px, 70vh)", display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <h2 style={{ margin: 0 }}>{title}</h2>
-        {onRefresh && <ChatIcon label="Refresh conversation" disabled={busy} onClick={onRefresh}>
+        {onRefresh && <ChatIcon label={t("Refresh conversation")} disabled={busy} onClick={onRefresh}>
           <path d="M20 9a8 8 0 0 0-14-3L3 9m0-5v5h5m-4 6a8 8 0 0 0 14 3l3-3m0 5v-5h-5" />
         </ChatIcon>}
       </div>
-      <div ref={history} role="log" aria-label="Conversation" tabIndex={0}
+      <div ref={history} role="log" aria-label={t("Conversation")} tabIndex={0}
         style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: 6 }}>
-        {!messages.length && <p>{busy ? "Loading conversation…" : empty}</p>}
+        {!messages.length && <p>{busy ? t("Loading conversation…") : empty}</p>}
         {messages.map(message => <div key={message.id} style={{
           display: "flex", flexDirection: "column", alignItems: message.mine ? "flex-end" : "flex-start", marginBottom: 8,
         }}>
           {!message.mine && message.sender && <small style={{ color: "#c3cad1" }}>{message.sender}</small>}
-          <div aria-label={message.mine ? "You" : message.sender ?? title} style={{
+          <div aria-label={message.mine ? t("You") : message.sender ?? title} style={{
             maxWidth: "85%", padding: "7px 11px", color: "#fff",
             background: message.mine ? "#286c36" : "#353b42",
             borderRadius: message.mine ? "13px 13px 3px 13px" : "13px 13px 13px 3px",
             overflowWrap: "anywhere", whiteSpace: "pre-wrap",
-          }}>{message.hidden ? "Message unavailable" : message.text}</div>
-          {message.timestamp && <small style={{ color: "#c3cad1" }}>{new Date(message.timestamp).toLocaleString()}</small>}
+          }}>{message.hidden ? t("Message unavailable") : message.text}</div>
+          {message.timestamp && <small style={{ color: "#c3cad1" }}>{new Date(message.timestamp).toLocaleString(language === "en" ? undefined : language)}</small>}
         </div>)}
       </div>
-      {error && <div role="alert">{error}</div>}
-      <TextField label="Message" value={draft} inlineControls={
+      {error && <div role="alert">{translateError(error)}</div>}
+      <TextField label={t("Message")} value={draft} inlineControls={
         <ChatIcon label={sendLabel} disabled={busy || sendDisabled || !draft.trim()} onClick={onSend} inline>
           <path d="m3 4 18 8-18 8 3-8-3-8Zm3 8h15" />
         </ChatIcon>

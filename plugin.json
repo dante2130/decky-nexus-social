@@ -1,0 +1,12 @@
+{
+  "name": "Nexus Social",
+  "author": "Nexus contributors",
+  "version": "0.1.0",
+  "api_version": 2,
+  "main": "dist/index.js",
+  "flags": [],
+  "publish": {
+    "tags": ["xbox", "friends", "messaging", "voice"],
+    "description": "Manage Xbox friends, send direct messages, and start Xbox voice parties in Steam Gaming Mode."
+  }
+}

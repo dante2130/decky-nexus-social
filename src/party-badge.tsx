@@ -1,3 +1,4 @@
+import { t, useLanguage } from "./i18n";
 import { routerHook } from "@decky/api";
 import { afterPatch, findClassModule, findModule, Focusable } from "@decky/ui";
 import React, { cloneElement, createElement, useEffect, useState, useSyncExternalStore, type ElementType, type ReactNode } from "react";
@@ -7,8 +8,9 @@ const headerClasses = findClassModule(value => value.HeaderItem && value.Clickab
 const badgeKey = "nexus-party-badge";
 
 function PartyBadge({ count, onOpen, native }: { count: number; onOpen(): void; native: boolean }) {
+  useLanguage();
   const [focused, setFocused] = useState(false);
-  const label = `Open Xbox party, ${count} ${count === 1 ? "member" : "members"}`;
+  const label = t(count === 1 ? "Open Xbox party, {count} member" : "Open Xbox party, {count} members", { count });
   const className = [headerClasses?.HeaderItem, headerClasses?.Clickable, focused && "nexus-party-focused"].filter(Boolean).join(" ");
   const style: React.CSSProperties = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", position: "relative",
@@ -44,7 +46,7 @@ function PartyBadge({ count, onOpen, native }: { count: number; onOpen(): void; 
   return <Focusable noFocusRing className={className} role="button" data-nexus-party-badge
     onGamepadFocus={() => setFocused(true)} onGamepadBlur={() => setFocused(false)}
     onMouseEnter={() => setFocused(false)} onMouseMove={() => setFocused(false)}
-    onOKActionDescription="Open Xbox party" onActivate={onOpen} onClick={onOpen}
+    onOKActionDescription={t("Open Xbox party")} onActivate={onOpen} onClick={onOpen}
     aria-label={label} style={style}>{content}</Focusable>;
 }
 

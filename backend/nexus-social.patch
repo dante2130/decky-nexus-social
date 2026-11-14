@@ -1,0 +1,219 @@
+diff --git a/crates/xodus-cli/src/commands/native_social.rs b/crates/xodus-cli/src/commands/native_social.rs
+index 1f79169..1bc8486 100644
+--- a/crates/xodus-cli/src/commands/native_social.rs
++++ b/crates/xodus-cli/src/commands/native_social.rs
+@@ -74,6 +74,30 @@ fn conversation(value: &Value, me: &str, peer: &str) -> Result<Vec<Value>, &'sta
+     result.sort_by_key(|v| chrono::DateTime::parse_from_rfc3339(v["timestamp"].as_str().unwrap()).unwrap());
+     Ok(result)
+ }
++fn friend_device(row: &Value) -> Option<&'static str> {
++    if !matches!(row["presenceState"].as_str(), Some("Online" | "Away")) {
++        return None;
++    }
++    let platform = |device: &Value| match device.as_str()? {
++        "Xbox360" | "XboxOne" | "Scarlett" => Some("xbox"),
++        "PC" | "Windows8" | "WindowsOneCore" | "Win32" => Some("pc"),
++        _ => None,
++    };
++    if let Some(details) = row["presenceDetails"].as_array() {
++        let active = |detail: &&Value| detail["State"].as_str() == Some("Active");
++        if let Some(primary) = details.iter().filter(active).find(|detail| detail["IsPrimary"] == true) {
++            return platform(&primary["Device"]);
++        }
++        let mut platforms = details.iter().filter(active).map(|detail| platform(&detail["Device"]));
++        if let Some(first) = platforms.next() {
++            return first.filter(|device| platforms.all(|other| other == Some(*device)));
++        }
++    }
++    let devices = row["presenceDevices"].as_array()?;
++    let mut platforms = devices.iter().map(platform);
++    let device = platforms.next()??;
++    platforms.all(|other| other == Some(device)).then_some(device)
++}
+ fn friends(value: &Value) -> Result<Vec<Value>, &'static str> {
+     let rows = value["people"].as_array().ok_or("friends-shape")?;
+     if rows.len() > 2000 { return Err("friends-count"); }
+@@ -87,10 +111,19 @@ fn friends(value: &Value) -> Result<Vec<Value>, &'static str> {
+         let name = text(&row["uniqueModernGamertag"],128).filter(|s| !s.is_empty()).or(modern)
+             .or_else(|| text(&row["gamertag"],128).filter(|s| !s.is_empty())).ok_or("friend-name")?;
+         let online = match row["presenceState"].as_str() { Some("Online" | "Away") => true, _ => false };
++        let summary = &row["multiplayerSummary"];
++        let party = summary["partyDetails"].as_array().and_then(|items| items.first());
++        let joinable = party
++            .filter(|party| party["joinRestriction"].as_str().is_some_and(|s| s.eq_ignore_ascii_case("followed")))
++            .and_then(|party| party["sessionRef"]["name"].as_str())
++            .filter(|id| !id.is_empty() && id.len() <= 128 &&
++                id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')));
+         Ok(json!({"xuid":id,"gamertag":name,"online":online,"avatarUrl":row["displayPicRaw"].as_str().and_then(super::profile::picture_url).map(|u|u.to_string()),
+             "presence":text(&row["presenceText"],256).filter(|s|!s.is_empty()).unwrap_or_else(|| match row["presenceState"].as_str(){Some("Online"|"Away")=>"Online",Some("Offline")=>"Offline",_=>"Presence unavailable"}.into()),
++            "device":friend_device(row),
+             "favorite":row["isFavorite"].as_bool().unwrap_or(false),
+-            "inParty":row["multiplayerSummary"]["inParty"].as_u64().unwrap_or(0) > 0}))
++            "inParty":party.is_some() || summary["inParty"].as_u64().unwrap_or(0) > 0,
++            "joinablePartyId":joinable}))
+     }).collect()
+ }
+ fn inbox(value: &Value, self_xuid: &str) -> Result<Vec<Value>, &'static str> {
+diff --git a/crates/xodus-cli/src/commands/native_social_party.rs b/crates/xodus-cli/src/commands/native_social_party.rs
+index 425545a..c563ec6 100644
+--- a/crates/xodus-cli/src/commands/native_social_party.rs
++++ b/crates/xodus-cli/src/commands/native_social_party.rs
+@@ -21,9 +21,19 @@ fn user_id(value:&Value)->Option<String>{
+     value.as_str().filter(|s|super::native_social::xuid(s)).map(str::to_owned)
+         .or_else(||value.as_u64().filter(|n|*n>0).map(|n|n.to_string()))
+ }
++fn joinability(input: &Value) -> Result<&'static str, &'static str> {
++    match input.get("joinability") {
++        None => Ok("inviteOnly"),
++        Some(Value::String(value)) if value == "inviteOnly" => Ok("inviteOnly"),
++        Some(Value::String(value)) if value == "followedByMembers" => Ok("followedByMembers"),
++        _ => Err("party-joinability"),
++    }
++}
++
+ fn validate(input:&Value)->Result<&str,&'static str>{
+     short(&input["account"],512)?;
+     let op=input["operation"].as_str().ok_or("party-operation")?;
++    if op == "create" { joinability(input)?; }
+     match op {
+         "active"=>(),
+         "get"|"leave"=>{id(&input["partyId"])?;},
+@@ -38,7 +48,7 @@ fn validate(input:&Value)->Result<&str,&'static str>{
+             if op=="accept-invite"{id(&input["inviteId"])?;}
+         },
+         "invite"=>{id(&input["partyId"])?;if !input["xuid"].as_str().is_some_and(super::native_social::xuid){return Err("party-invite-xuid");}},
+-        "voice-policy"=>{if !input["xuid"].as_str().is_some_and(super::native_social::xuid){return Err("voice-policy-xuid");}},
++        "voice-policy"|"text-policy"|"friend-party"=>{if !input["xuid"].as_str().is_some_and(super::native_social::xuid){return Err("voice-policy-xuid");}},
+         _=>return Err("party-operation"),
+     }
+     Ok(op)
+@@ -68,10 +78,21 @@ async fn relay_region(tokens:&TokenManager,expected_account:&str)->Result<String
+     // The shipped party client uses the authenticated streaming service's default region.
+     let(client,authorization,account,_)=super::profile::xbox_session_for(tokens,"http://gssv.xboxlive.com/").await?;
+     if account!=expected_account{return Err("account-changed");}
++    let ticket=authorization.split_once(';').map(|(_, ticket)| ticket).ok_or("party-region-token")?;
+     let response=client.post("https://xgpuweb.gssv-play-prod.xboxlive.com/v2/login/user")
+-        .json(&json!({"token":authorization,"offeringId":"xgpuweb"})).send().await.map_err(|_|"party-region-request")?;
++        .header("Authorization",&authorization)
++        .header("Accept","application/json")
++        .header("Accept-Language","en-US")
++        .header("x-gssv-client","XboxComBrowser")
++        .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")
++        .json(&json!({"token":ticket,"offeringId":"xgpuweb"})).send().await.map_err(|_|"party-region-request")?;
+     if response.status().as_u16()==401{super::profile::invalidate_social_session(tokens);}
+-    if !response.status().is_success(){return Err("party-region-http");}
++    match response.status().as_u16() {
++        200..=299 => (),
++        401|403 => return Err("party-region-access"),
++        429 => return Err("party-region-rate-limited"),
++        _ => return Err("party-region-http"),
++    }
+     let bytes=bounded(response,1024*1024).await?;
+     tokens.validate_user_token_snapshot(&snapshot).map_err(|_|"account-changed")?;
+     default_region(&serde_json::from_slice(&bytes).map_err(|_|"party-region-json")?)
+@@ -84,28 +105,71 @@ pub(super) async fn request(tokens:&TokenManager,body:&str)->Result<Value,&'stat
+     let(client,authorization,account,self_xuid)=xbox_session_identity(tokens).await?;
+     if input["account"]!=account{return Err("account-changed");}
+     let self_xuid=self_xuid.filter(|s|super::native_social::xuid(s)).ok_or("xsts-user-id")?;
+-    let session=if matches!(operation,"active"|"create"|"voice-policy"|"accept-invite"){""}else{id(&input["partyId"])?};
+-    let region=if matches!(operation,"create"|"join"|"accept-invite"){Some(relay_region(tokens,&account).await?)}else{None};
+-    let connection=||json!({"isBroadcasting":false,"allowedInBroadcast":false,"textToSpeechEnabled":false,
++    if operation == "friend-party" {
++        let peer=input["xuid"].as_str().ok_or("party-friend-xuid")?;
++        let response=client.get(format!("https://party.xboxlive.com/users/xuid({peer})/parties"))
++            .header("Authorization",&authorization).send().await.map_err(|_|"party-friend-request")?;
++        let mut result=json!({"active":false,"joinableId":null});
++        if response.status().is_success() {
++            let bytes=bounded(response,128*1024).await?;
++            let value:Value=serde_json::from_slice(&bytes).map_err(|_|"party-json")?;
++            let rows=value.as_array().filter(|rows|rows.len()<=16).ok_or("party-active-shape")?;
++            for row in rows {
++                let Ok(party_id)=id(&row["id"]) else {continue};
++                result["active"]=json!(true);
++                let response=client.get(format!("https://party.xboxlive.com/parties/{party_id}"))
++                    .header("Authorization",&authorization).send().await.map_err(|_|"party-friend-request")?;
++                if !response.status().is_success(){continue;}
++                let bytes=bounded(response,128*1024).await?;
++                let details:Value=serde_json::from_slice(&bytes).map_err(|_|"party-json")?;
++                if details["id"]==party_id && details["joinability"]=="followedByMembers" {
++                    result["joinableId"]=json!(party_id);
++                    break;
++                }
++            }
++        }
++        tokens.validate_user_token_snapshot(&snapshot).map_err(|_|"account-changed")?;
++        return Ok(json!({"schema":1,"kind":"party","account":account,"operation":operation,"result":result}));
++    }
++    let session=if matches!(operation,"active"|"create"|"voice-policy"|"text-policy"|"accept-invite"){""}else{id(&input["partyId"])?};
++    let region=if matches!(operation,"create"|"join"|"accept-invite"){
++        match relay_region(tokens,&account).await {
++            Ok(region) => Some(region),
++            // Xbox can deny the optional xCloud login while allowing Party Chat.
++            // Party creation requires a relay region even in that case.
++            Err("party-region-access") => Some("WestEurope".to_owned()),
++            Err(error) => return Err(error),
++        }
++    }else{None};
++    let connection=||{
++        let mut webrtc=json!({"transportConnectionRequest":input["offer"],"skipAllocation":false});
++        if let Some(region)=&region {webrtc["preferredRegion"]=json!(region);}
++        json!({"isBroadcasting":false,"allowedInBroadcast":false,"textToSpeechEnabled":false,
+         "chat":{"connectionId":input["connectionId"],"serverNonce":input["serverNonce"]},
+-        "webRTC":{"transportConnectionRequest":input["offer"],"preferredRegion":region,"skipAllocation":false},"accessory":{"capabilities":0}});
++        "webRTC":webrtc,"accessory":{"capabilities":0}})
++    };
+     let root="https://party.xboxlive.com";
+-    let request=match operation{
+-        "active"=>client.get(format!("{root}/users/xuid({self_xuid})/parties")),
+-        "get"=>client.get(format!("{root}/parties/{session}/details")),
+-        "create"=>{
++    if matches!(operation,"create"|"join"){
+             // Preserve any party already active on another device. The UI must resolve it explicitly.
+             let response=client.get(format!("{root}/users/xuid({self_xuid})/parties")).header("Authorization",&authorization).send().await.map_err(|_|"party-active-request")?;
+             let bytes=bounded(response,128*1024).await?;
+             let active:Value=serde_json::from_slice(&bytes).map_err(|_|"party-active-json")?;
+             if !active.as_array().ok_or("party-active-shape")?.is_empty(){return Err("party-already-active");}
+-            client.post(format!("{root}/parties/create")).json(&json!({"partyDetails":{"joinability":"inviteOnly"},"ownerConnection":connection()}))
++    }
++    let request=match operation{
++        "active"=>client.get(format!("{root}/users/xuid({self_xuid})/parties")),
++        "get"=>client.get(format!("{root}/parties/{session}/details")),
++        "create"=>{
++            client.post(format!("{root}/parties/create")).json(&json!({"partyDetails":{"joinability":joinability(&input)?},"ownerConnection":connection()}))
+         },
+         "join"=>client.put(format!("{root}/parties/{session}/connection")).json(&connection()),
+         "accept-invite"=>client.put(format!("{root}/invites/{}/party/connection",id(&input["inviteId"])?)).json(&connection()),
+         "leave"=>client.post(format!("{root}/parties/{session}/leave")),
+         "invite"=>client.post(format!("{root}/parties/{session}/invite")).json(&json!({"inviteeXuids":[input["xuid"]]})),
+-        "voice-policy"=>client.get(format!("https://privacy.xboxlive.com/users/xuid({self_xuid})/permission/validate?setting=CommunicateUsingVoice&target=xuid({})",input["xuid"].as_str().ok_or("voice-policy-xuid")?)).header("x-xbl-contract-version","2"),
++        "voice-policy"|"text-policy"=>{
++            let setting=if operation=="voice-policy"{"CommunicateUsingVoice"}else{"CommunicateUsingText"};
++            client.get(format!("https://privacy.xboxlive.com/users/xuid({self_xuid})/permission/validate?setting={setting}&target=xuid({})",input["xuid"].as_str().ok_or("party-policy-xuid")?)).header("x-xbl-contract-version","2")
++        },
+         _=>return Err("party-operation"),
+     };
+     let correlation=if let Some(offer)=input["offer"].as_str(){
+@@ -154,7 +218,7 @@ pub(super) async fn request(tokens:&TokenManager,body:&str)->Result<Value,&'stat
+                 let rows=value.as_array().filter(|a|a.len()<=16).ok_or("party-active-shape")?;
+                 let sessions:Result<Vec<_>,_>=rows.iter().map(|v|id(&v["id"]).map(str::to_owned)).collect();json!({"ids":sessions?})
+             },
+-            "voice-policy"=>json!({"isAllowed":value["isAllowed"].as_bool().ok_or("voice-policy-shape")?}),
++            "voice-policy"|"text-policy"=>json!({"isAllowed":value["isAllowed"].as_bool().ok_or("voice-policy-shape")?}),
+             _=>document(&value,&self_xuid)?,
+         }
+     };
+@@ -164,6 +228,14 @@ pub(super) async fn request(tokens:&TokenManager,body:&str)->Result<Value,&'stat
+
+ #[cfg(test)]mod tests{
+     use super::*;
++    #[test]
++    fn supports_the_two_xbox_party_joinability_values() {
++        assert_eq!(joinability(&json!({})), Ok("inviteOnly"));
++        assert_eq!(joinability(&json!({"joinability":"inviteOnly"})), Ok("inviteOnly"));
++        assert_eq!(joinability(&json!({"joinability":"followedByMembers"})), Ok("followedByMembers"));
++        assert!(joinability(&json!({"joinability":"open"})).is_err());
++        assert!(joinability(&json!({"joinability":null})).is_err());
++    }
+     #[test]fn only_fixed_operations_and_safe_party_ids_are_accepted(){
+         assert!(validate(&json!({"account":"account","operation":"active"})).is_ok());
+         for op in ["https://evil.test/","update-profile","../../me"]{assert!(validate(&json!({"account":"account","operation":op})).is_err());}

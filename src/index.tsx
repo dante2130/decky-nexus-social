@@ -2,10 +2,11 @@ import { PeopleDialog } from "./people-dialog";
 import { initializeLanguage, t, translateError, useLanguage } from "./i18n";
 import { InvitePeople } from "./invite-people";
 import { addEventListener, removeEventListener, definePlugin, routerHook, toaster } from "@decky/api";
-import { ConfirmModal, DialogButton, Focusable, Navigation, PanelSection, PanelSectionRow, ButtonItem, showModal, staticClasses } from "@decky/ui";
+import { ConfirmModal, DialogButton, Dropdown, DropdownItem, Focusable, ModalRoot, Navigation, PanelSection, PanelSectionRow, ButtonItem, ToggleField, showModal, staticClasses, type DropdownProps, type ShowModalResult } from "@decky/ui";
 import React, { useEffect, useState, type ReactNode } from "react";
 import { SocialHeader, tabs } from "./header";
 import { installPartyBadge } from "./party-badge";
+import { installSteamMainMenuEntry, steamMenuPositions } from "./steam-main-menu";
 import { PartyMember } from "./party-roster";
 import { ChatWindow, Conversation } from "./conversation";
 import { FriendList, PlayerRows } from "./friends";
@@ -35,6 +36,24 @@ function confirm(label: string, callback: () => void) {
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const initialVoice: VoiceState = { connected: false, muted: true, audioBlocked: false };
+const steamMenuSettingsKey = "NEXUS_SOCIAL_STEAM_MENU";
+type SteamMenuPosition = (typeof steamMenuPositions)[number];
+type SteamMenuSettings = { enabled: boolean; position: SteamMenuPosition };
+// Decky exposes Steam's dropdown class, but types it only as a React component.
+const SteamDropdown = Dropdown as unknown as new (props: DropdownProps) => { ShowMenu(): void };
+const positionOptions = steamMenuPositions.map(data => ({ data, label: String(data) }));
+
+function readSteamMenuSettings(): SteamMenuSettings {
+  try {
+    const saved = JSON.parse(localStorage.getItem(steamMenuSettingsKey) ?? "null");
+    return {
+      enabled: saved?.enabled !== false,
+      position: steamMenuPositions.find(position => position === saved?.position) ?? 3,
+    };
+  } catch {
+    return { enabled: true, position: 3 };
+  }
+}
 
 export default definePlugin(() => {
   void initializeLanguage();
@@ -312,7 +331,7 @@ export default definePlugin(() => {
         select={setTab}
         manage={snapshot ? () => showModal(<PeopleDialog mode="manage" snapshot={snapshot} refresh={refresh} />) : undefined}
         search={snapshot ? () => showModal(<PeopleDialog mode="search" snapshot={snapshot} refresh={refresh} />) : undefined}
-        refresh={() => void run(refresh)} />
+        refresh={() => void run(refresh)} openSettings={openMenuSettings} />
       {!snapshot && roster && <PanelSection><FriendList friends={roster.friends} /></PanelSection>}
 
       {snapshot && tab === "Friends" && <PanelSection>
@@ -473,18 +492,147 @@ export default definePlugin(() => {
       <SocialPanel initialTab="Party" />
     </Focusable>, { exact: true });
 
+  const steamMenuRoute = "/nexus-social-popup";
+  let menuSettings = readSteamMenuSettings();
+  let removeSteamMainMenuEntry: (() => void) | undefined;
+  let settingsModal: ShowModalResult | undefined;
+  const icon = <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <circle cx="8" cy="7" r="3.5" />
+    <circle cx="17" cy="8" r="3" />
+    <path d="M1 20v-3a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v3H1Zm16 0v-3a7 7 0 0 0-1.4-4.2H18a5 5 0 0 1 5 5V20h-6Z" />
+  </svg>;
+
+  function SocialPopup({ closeModal }: { closeModal?: () => void }) {
+    return <ModalRoot closeModal={closeModal} onCancel={closeModal} bAllowFullSize modalClassName="nexus-social-popup">
+      <style>{`
+        .nexus-social-popup > .ModalPosition_Content {
+          width: 100vw;
+          max-width: 100vw;
+          box-sizing: border-box;
+        }
+        .nexus-social-popup .DialogContentTransition,
+        .nexus-social-popup .DialogContent.DialogContentFullSize,
+        .nexus-social-popup .DialogContentFullSize > .DialogContent_InnerWidth {
+          width: 100%;
+          max-width: none;
+          box-sizing: border-box;
+        }
+      `}</style>
+      <Focusable flow-children="column" style={{
+        width: "100%", height: "min(680px, 75vh)", overflowY: "auto",
+        boxSizing: "border-box", padding: "16px 20px 24px", scrollPadding: "16px 0 24px",
+      }} onFocus={event => {
+        if (event.target instanceof HTMLElement && event.target !== event.currentTarget) {
+          event.target.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      }}>
+        <h1 style={{ margin: "0 12px 12px" }}>Nexus Social</h1>
+        <SocialPanel />
+      </Focusable>
+    </ModalRoot>;
+  }
+
+  let popup: ShowModalResult | undefined;
+  let popupTimer: ReturnType<typeof setTimeout> | undefined;
+  function SteamMenuPopupRoute() {
+    useEffect(() => {
+      // Restore the previous Steam screen before opening the modal over it.
+      Navigation.NavigateBack();
+      if (disposed || !menuSettings.enabled || popup || popupTimer !== undefined) return;
+      popupTimer = setTimeout(() => {
+        popupTimer = undefined;
+        if (!menuSettings.enabled) return;
+        popup = showModal(<SocialPopup />, undefined, {
+          bNeverPopOut: true,
+          fnOnClose: () => { popup = undefined; },
+        });
+      }, 100);
+    }, []);
+    return null;
+  }
+
+  function saveMenuSettings(next: SteamMenuSettings) {
+    try {
+      localStorage.setItem(steamMenuSettingsKey, JSON.stringify(next));
+    } catch {
+      return false;
+    }
+    const visibilityChanged = menuSettings.enabled !== next.enabled;
+    menuSettings = next;
+    if (visibilityChanged) updateSteamMainMenuEntry();
+    return true;
+  }
+
+  function chooseMenuPosition() {
+    if (disposed || !menuSettings.enabled) return;
+    const dropdown = new SteamDropdown({
+      rgOptions: positionOptions,
+      selectedOption: menuSettings.position,
+      onChange: ({ data }) => {
+        if (!saveMenuSettings({ ...menuSettings, position: data })) {
+          toaster.toast({ title: "Nexus Social", body: t("Could not save Steam menu settings.") });
+        }
+      },
+    });
+    dropdown.ShowMenu();
+  }
+
+  function MenuSettings({ closeModal }: { closeModal?: () => void }) {
+    useLanguage();
+    const [settings, setSettings] = useState(menuSettings);
+    const [saveFailed, setSaveFailed] = useState(false);
+    function save(next: SteamMenuSettings) {
+      const saved = saveMenuSettings(next);
+      if (saved) setSettings(next);
+      setSaveFailed(!saved);
+    }
+    return <ModalRoot closeModal={closeModal} onCancel={closeModal}>
+      <PanelSection title={t("Settings")}>
+        <PanelSectionRow>
+          <ToggleField label={t("Show Nexus Social in the Steam menu")} checked={settings.enabled}
+            onChange={enabled => save({ ...settings, enabled })} />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <DropdownItem label={t("Steam menu position")} disabled={!settings.enabled}
+            rgOptions={steamMenuPositions.map(data => ({ data, label: data === 9 ? t("Bottom") : String(data) }))}
+            selectedOption={settings.position} onChange={option => save({ ...settings, position: option.data })} />
+        </PanelSectionRow>
+        {saveFailed && <PanelSectionRow><div role="alert">{t("Could not save Steam menu settings.")}</div></PanelSectionRow>}
+      </PanelSection>
+    </ModalRoot>;
+  }
+
+  function openMenuSettings() {
+    if (disposed || settingsModal) return;
+    settingsModal = showModal(<MenuSettings />, undefined, {
+      bNeverPopOut: true,
+      fnOnClose: () => { settingsModal = undefined; },
+    });
+  }
+
+  function updateSteamMainMenuEntry() {
+    removeSteamMainMenuEntry?.();
+    removeSteamMainMenuEntry = menuSettings.enabled
+      ? installSteamMainMenuEntry(steamMenuRoute, icon, () => menuSettings.position, chooseMenuPosition)
+      : undefined;
+  }
+
+  routerHook.addRoute(steamMenuRoute, SteamMenuPopupRoute, { exact: true });
+  updateSteamMainMenuEntry();
+
   return {
     name: "Nexus Social",
     titleView: <div className={staticClasses.Title}>Nexus Social</div>,
     content: <SocialPanel />,
-    icon: <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="8" cy="7" r="3.5" />
-      <circle cx="17" cy="8" r="3" />
-      <path d="M1 20v-3a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v3H1Zm16 0v-3a7 7 0 0 0-1.4-4.2H18a5 5 0 0 1 5 5V20h-6Z" />
-    </svg>,
+    icon,
     onDismount() {
       disposed = true;
       clearInterval(signalingMonitor);
+      removeSteamMainMenuEntry?.();
+      settingsModal?.Close();
+      clearTimeout(popupTimer);
+      popup?.Close();
+      routerHook.removeRoute(steamMenuRoute);
       partyBadge.remove();
       routerHook.removeRoute(partyRoute);
       removeEventListener("friends_updated", friendsUpdated);

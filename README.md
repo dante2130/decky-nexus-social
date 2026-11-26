@@ -13,10 +13,12 @@ Friends hosting a verified joinable Xbox party show a headset and a **Join party
 
 1. Install Decky Loader and Xodus Nexus on the same SteamOS account. Sign in to Xbox in Xodus Nexus and install its backend. Nexus Social discovers the backend from `~/.config/xodus-nexus/xodus-backends/current.json`. It requires a backend with the `native-social listen`, `people`, and `party` commands.
 2. Enable Developer Mode in Decky settings and use **Install Plugin from ZIP File** to select `NexusSocial.zip`.
-3. Open **Nexus Social** in the Decky quick-access panel. If needed, select **Connect with Nexus sign-in**. Xodus Nexus can be closed once its backend and sign-in are set up.
+3. Press the **Steam** button and select **Nexus Social** to open its full-width popup. You can also open it from the Decky quick-access panel. If needed, select **Connect with Nexus sign-in**. Xodus Nexus can be closed once its backend and sign-in are set up.
 4. For voice, open **Party** and select **Create invite-only party** or **Create public party (joinable by friends)**. Xbox applies its friends and privacy rules to the public option. The Gaming Mode status bar shows a clickable headset with a member-count badge when voice connects. Party profiles highlight active speakers. Open **View party chat** to read and send live party messages. Steam notifications report party creation, departures, joins, and incoming messages. Once connected, invite a friend and enable the microphone. If Steam blocks playback, use **Enable party audio**. Leave any party active on another device before creating a new one.
 
 Friend rows show a PC or Xbox console icon when presence includes a recognized device. The profile header shows your gamerpic, gamertag, gamerscore, and Xbox presence, with icon controls for Friends, Messages, Party, and Refresh.
+
+Select the **Settings** gear next to **Refresh** to show or hide the Steam menu entry and choose its position. You can also highlight **Nexus Social** in the Steam menu and press **X** to change its position.
 
 If the xCloud region lookup is denied, the bundled backend uses the West Europe relay. This is the relay fallback verified with the existing Xbox sign-in.
 

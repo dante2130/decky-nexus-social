@@ -6,7 +6,7 @@ import type { Player } from "./rpc";
 
 export const tabs = ["Friends", "Messages", "Party"] as const;
 type Tab = (typeof tabs)[number];
-type Control = Tab | "Manage friends" | "Search Xbox" | "Refresh";
+type Control = Tab | "Manage friends" | "Search Xbox" | "Refresh" | "Settings";
 
 const icons: Record<Control, React.ReactNode> = {
   Friends: <><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M17 5a3 3 0 0 1 0 6m4 9v-2a4 4 0 0 0-3-3.9" /></>,
@@ -15,6 +15,7 @@ const icons: Record<Control, React.ReactNode> = {
   "Manage friends": <><circle cx="8" cy="7" r="3" /><path d="M2 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m3-12h5m-5 5h5m-5 5h5" /></>,
   "Search Xbox": <><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5" /></>,
   Refresh: <path d="M20 9a8 8 0 0 0-14-3L3 9m0-5v5h5m-4 6a8 8 0 0 0 14 3l3-3m0 5v-5h-5" />,
+  Settings: <><path d="m10 3-.6 2.3-1.6.9-2.3-.6-2 3.4 1.7 1.7v1.8l-1.7 1.7 2 3.4 2.3-.6 1.6.9.6 2.3h4l.6-2.3 1.6-.9 2.3.6 2-3.4-1.7-1.7v-1.8l1.7-1.7-2-3.4-2.3.6-1.6-.9L14 3z" /><circle cx="12" cy="11.6" r="2.7" /></>,
 };
 
 const styles = `
@@ -45,7 +46,7 @@ const styles = `
   .nexus-social-header-status { color: #c3cad1; }
 `;
 
-export function SocialHeader({ player, tab, busy, ready, error, select, manage, search, refresh }: {
+export function SocialHeader({ player, tab, busy, ready, error, select, manage, search, refresh, openSettings }: {
   player?: Player;
   tab: Tab;
   busy: boolean;
@@ -55,6 +56,7 @@ export function SocialHeader({ player, tab, busy, ready, error, select, manage, 
   manage?: () => void;
   search?: () => void;
   refresh(): void;
+  openSettings(): void;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const status = player ? presenceOf(player) : undefined;
@@ -63,7 +65,7 @@ export function SocialHeader({ player, tab, busy, ready, error, select, manage, 
     const label = t(control === "Refresh" && !ready ? "Connect with Nexus sign-in" : control);
     return <DialogButton key={control} className={`nexus-social-control${active ? " nexus-social-active" : ""}${actionStart ? " nexus-social-action-start" : ""}`}
       onOKActionDescription={label} aria-label={label} aria-pressed={active}
-      disabled={busy} onClick={onClick}>
+      disabled={busy && control !== "Settings"} onClick={onClick}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <title>{label}</title>
@@ -99,6 +101,7 @@ export function SocialHeader({ player, tab, busy, ready, error, select, manage, 
       {manage && controlButton("Manage friends", manage, undefined, true)}
       {search && controlButton("Search Xbox", search, undefined, !manage)}
       {controlButton("Refresh", refresh, undefined, !manage && !search)}
+      {controlButton("Settings", openSettings)}
     </Focusable>
     {error && <div className="nexus-social-header-alert" role="alert">{translateError(error)}</div>}
     {busy && <div className="nexus-social-header-status" role="status">{t("Working…")}</div>}

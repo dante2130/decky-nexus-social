@@ -1,4 +1,10 @@
 export default {
+  "Change menu position": "Change menu position",
+  "Settings": "Settings",
+  "Show Nexus Social in the Steam menu": "Show Nexus Social in the Steam menu",
+  "Steam menu position": "Steam menu position",
+  "Bottom": "Bottom",
+  "Could not save Steam menu settings.": "Could not save Steam menu settings.",
   "Friends": "Friends",
   "Messages": "Messages",
   "Party": "Party",

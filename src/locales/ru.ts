@@ -1,4 +1,10 @@
 export default {
+  "Change menu position": "Изменить позицию в меню",
+  "Settings": "Настройки",
+  "Show Nexus Social in the Steam menu": "Показывать Nexus Social в меню Steam",
+  "Steam menu position": "Положение в меню Steam",
+  "Bottom": "Внизу",
+  "Could not save Steam menu settings.": "Не удалось сохранить настройки меню Steam.",
   "Friends": "Друзья",
   "Messages": "Сообщения",
   "Party": "Группа",
